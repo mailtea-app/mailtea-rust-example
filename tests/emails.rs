@@ -3,31 +3,32 @@
 
 mod mock_mailtea;
 
-use mailtea_rust_example::mailtea::{Client, MailteaError, SendEmail, Tag};
+use mailtea::{Mailtea, SendEmail};
+use mailtea_rust_example::{hello_email, scheduled_email};
 
 const API_KEY: &str = "mt_pat_testkeytestkeytestkeytestkey00";
+const FROM: &str = "Acme <hello@acme.com>";
+const TO: &str = "reader@yourdomain.com";
 
-fn hello() -> SendEmail {
-    SendEmail {
-        from: "Acme <hello@acme.com>".to_string(),
-        to: vec!["reader@yourdomain.com".to_string()],
-        subject: "Hello from Rust".to_string(),
-        html: Some("<p>Sent with Rust.</p>".to_string()),
-        text: Some("Sent with Rust.".to_string()),
-        tags: vec![Tag {
-            name: "example".to_string(),
-            value: "rust".to_string(),
-        }],
-        ..Default::default()
-    }
+async fn client() -> (mock_mailtea::MockMailtea, Mailtea) {
+    let mock = mock_mailtea::start().await;
+    let mailtea = Mailtea::builder()
+        .api_key(API_KEY)
+        .base_url(mock.url.clone())
+        .build()
+        .expect("an explicit key and base URL build");
+    (mock, mailtea)
 }
 
 #[tokio::test]
 async fn send_posts_the_email_and_returns_its_id() {
-    let mock = mock_mailtea::start().await;
-    let mailtea = Client::new(API_KEY, Some(mock.url.clone()));
+    let (mock, mailtea) = client().await;
 
-    let sent = mailtea.send(&hello()).await.expect("send failed");
+    let sent = mailtea
+        .emails
+        .send(&hello_email(FROM, TO, "Hello from Rust"))
+        .await
+        .expect("send failed");
 
     let request = mock.last();
     assert_eq!(request.method, "POST");
@@ -36,14 +37,14 @@ async fn send_posts_the_email_and_returns_its_id() {
         request.authorization.as_deref(),
         Some(format!("Bearer {API_KEY}").as_str())
     );
-    assert_eq!(request.body["from"], "Acme <hello@acme.com>");
-    assert_eq!(
-        request.body["to"],
-        serde_json::json!(["reader@yourdomain.com"])
-    );
+    assert_eq!(request.body["from"], FROM);
+    assert_eq!(request.body["to"], serde_json::json!([TO]));
     assert_eq!(request.body["subject"], "Hello from Rust");
-    assert_eq!(request.body["html"], "<p>Sent with Rust.</p>");
-    assert_eq!(request.body["text"], "Sent with Rust.");
+    assert_eq!(
+        request.body["html"],
+        "<p>Sent with <strong>Rust</strong> and the Mailtea SDK.</p>"
+    );
+    assert_eq!(request.body["text"], "Sent with Rust and the Mailtea SDK.");
     assert_eq!(request.body["tags"][0]["name"], "example");
     assert_eq!(request.body["tags"][0]["value"], "rust");
     assert_eq!(sent.id, "txemail_00000000000000000000000000000000");
@@ -51,10 +52,13 @@ async fn send_posts_the_email_and_returns_its_id() {
 
 #[tokio::test]
 async fn unset_fields_are_left_out_of_the_body() {
-    let mock = mock_mailtea::start().await;
-    let mailtea = Client::new(API_KEY, Some(mock.url.clone()));
+    let (mock, mailtea) = client().await;
 
-    mailtea.send(&hello()).await.expect("send failed");
+    mailtea
+        .emails
+        .send(&hello_email(FROM, TO, "Hello from Rust"))
+        .await
+        .expect("send failed");
 
     // An empty `cc` or a null `scheduled_at` on the wire would turn an immediate
     // send into a rejected one, so the optional fields have to disappear.
@@ -66,26 +70,30 @@ async fn unset_fields_are_left_out_of_the_body() {
 
 #[tokio::test]
 async fn a_scheduled_send_carries_scheduled_at() {
-    let mock = mock_mailtea::start().await;
-    let mailtea = Client::new(API_KEY, Some(mock.url.clone()));
+    let (mock, mailtea) = client().await;
 
     mailtea
-        .send(&SendEmail {
-            scheduled_at: Some("2026-09-01T09:00:00Z".to_string()),
-            ..hello()
-        })
+        .emails
+        .send(&scheduled_email(
+            FROM,
+            TO,
+            "Hello from Rust",
+            "2026-09-01T09:00:00Z",
+        ))
         .await
         .expect("send failed");
 
-    assert_eq!(mock.last().body["scheduled_at"], "2026-09-01T09:00:00Z");
+    let body = mock.last().body;
+    assert_eq!(body["scheduled_at"], "2026-09-01T09:00:00Z");
+    assert_eq!(body["subject"], "Hello from Rust (scheduled)");
 }
 
 #[tokio::test]
 async fn get_reads_the_status_back() {
-    let mock = mock_mailtea::start().await;
-    let mailtea = Client::new(API_KEY, Some(mock.url.clone()));
+    let (mock, mailtea) = client().await;
 
     let email = mailtea
+        .emails
         .get("txemail_00000000000000000000000000000000")
         .await
         .expect("get failed");
@@ -96,23 +104,22 @@ async fn get_reads_the_status_back() {
         request.path,
         "/v1/emails/txemail_00000000000000000000000000000000"
     );
-    assert!(
-        request
-            .authorization
-            .as_deref()
-            .is_some_and(|value| value.starts_with("Bearer "))
-    );
+    assert!(request
+        .authorization
+        .as_deref()
+        .is_some_and(|value| value.starts_with("Bearer ")));
     assert_eq!(email.id, "txemail_00000000000000000000000000000000");
-    assert_eq!(email.last_event.as_deref(), Some("delivered"));
+    // The SDK fills `status` in from the wire's `last_event`.
+    assert_eq!(email.status.as_deref(), Some("delivered"));
     assert_eq!(email.subject.as_deref(), Some("Mock email"));
 }
 
 #[tokio::test]
 async fn cancel_hits_the_cancel_route() {
-    let mock = mock_mailtea::start().await;
-    let mailtea = Client::new(API_KEY, Some(mock.url.clone()));
+    let (mock, mailtea) = client().await;
 
     let canceled = mailtea
+        .emails
         .cancel("txemail_00000000000000000000000000000000")
         .await
         .expect("cancel failed");
@@ -127,44 +134,32 @@ async fn cancel_hits_the_cancel_route() {
 }
 
 #[tokio::test]
-async fn a_rejected_send_surfaces_the_status_and_message() {
-    let mock = mock_mailtea::start().await;
-    let mailtea = Client::new(API_KEY, Some(mock.url.clone()));
+async fn a_rejected_send_surfaces_the_status_message_and_details() {
+    let (mock, mailtea) = client().await;
 
     let error = mailtea
-        .send(&SendEmail {
-            from: String::new(),
-            ..hello()
-        })
+        .emails
+        .send(&SendEmail::new("", [TO], "Hello from Rust"))
         .await
         .expect_err("a send with no from address should fail");
 
     // The status and the API's own words, plus the `details` entry naming the
     // field. "Validation failed" alone does not say what to change.
-    match &error {
-        MailteaError::Api { status, message } => {
-            assert_eq!(*status, 400);
-            assert_eq!(
-                message,
-                "Validation failed: from: String must contain at least 1 character(s)"
-            );
-        }
-        other => panic!("expected an API error, got {other:?}"),
-    }
-    assert_eq!(error.status(), Some(400));
-    assert_eq!(
-        error.to_string(),
-        "Mailtea API error (HTTP 400): Validation failed: from: String must contain at least 1 character(s)"
-    );
+    assert_eq!(error.status(), 400);
+    assert_eq!(error.message(), "Validation failed");
+    assert_eq!(error.details().unwrap()[0]["path"], serde_json::json!(["from"]));
+    assert!(!error.is_client_error());
+    assert!(!error.is_retryable());
+    assert_eq!(mock.last().path, "/v1/emails");
 }
 
 #[tokio::test]
 async fn an_idempotency_key_rides_along_as_a_header() {
-    let mock = mock_mailtea::start().await;
-    let mailtea = Client::new(API_KEY, Some(mock.url.clone()));
+    let (mock, mailtea) = client().await;
 
     mailtea
-        .send_idempotent(&hello(), Some("order-1138"))
+        .emails
+        .send_idempotent(&hello_email(FROM, TO, "Hello from Rust"), Some("order-1138"))
         .await
         .expect("send failed");
 
@@ -176,21 +171,24 @@ async fn an_idempotency_key_rides_along_as_a_header() {
 
 #[tokio::test]
 async fn a_plain_send_sets_no_idempotency_key() {
-    let mock = mock_mailtea::start().await;
-    let mailtea = Client::new(API_KEY, Some(mock.url.clone()));
+    let (mock, mailtea) = client().await;
 
-    mailtea.send(&hello()).await.expect("send failed");
+    mailtea
+        .emails
+        .send(&hello_email(FROM, TO, "Hello from Rust"))
+        .await
+        .expect("send failed");
 
     assert_eq!(mock.last().idempotency_key, None);
 }
 
 #[tokio::test]
 async fn an_id_cannot_walk_out_of_its_path_segment() {
-    let mock = mock_mailtea::start().await;
-    let mailtea = Client::new(API_KEY, Some(mock.url.clone()));
+    let (mock, mailtea) = client().await;
 
-    // Interpolated raw, this would call `GET /v1/domains` instead.
-    let _ = mailtea.get("../domains").await;
+    // Interpolated raw, this would call `GET /v1/domains` instead. The SDK
+    // escapes every id into its own path segment.
+    let _ = mailtea.emails.get("../domains").await;
 
     assert_eq!(mock.last().path, "/v1/emails/..%2Fdomains");
 }
@@ -198,21 +196,32 @@ async fn an_id_cannot_walk_out_of_its_path_segment() {
 #[tokio::test]
 async fn a_base_url_with_a_trailing_slash_still_resolves() {
     let mock = mock_mailtea::start().await;
-    let mailtea = Client::new(API_KEY, Some(format!("{}/", mock.url)));
+    let mailtea = Mailtea::builder()
+        .api_key(API_KEY)
+        .base_url(format!("{}/", mock.url))
+        .build()
+        .expect("build failed");
 
-    mailtea.send(&hello()).await.expect("send failed");
+    mailtea
+        .emails
+        .send(&hello_email(FROM, TO, "Hello from Rust"))
+        .await
+        .expect("send failed");
 
     assert_eq!(mock.last().path, "/v1/emails");
 }
 
 #[tokio::test]
-async fn every_request_is_recorded_in_order() {
-    let mock = mock_mailtea::start().await;
-    let mailtea = Client::new(API_KEY, Some(mock.url.clone()));
+async fn the_whole_run_hits_the_routes_the_readme_describes() {
+    let (mock, mailtea) = client().await;
 
-    let sent = mailtea.send(&hello()).await.expect("send failed");
-    mailtea.get(&sent.id).await.expect("get failed");
-    mailtea.cancel(&sent.id).await.expect("cancel failed");
+    let sent = mailtea
+        .emails
+        .send(&hello_email(FROM, TO, "Hello from Rust"))
+        .await
+        .expect("send failed");
+    mailtea.emails.get(&sent.id).await.expect("get failed");
+    mailtea.emails.cancel(&sent.id).await.expect("cancel failed");
 
     let routes: Vec<(String, String)> = mock
         .requests()
@@ -230,16 +239,33 @@ async fn every_request_is_recorded_in_order() {
 }
 
 #[tokio::test]
-async fn a_send_that_never_lands_is_a_transport_error() {
+async fn a_send_that_never_lands_is_a_client_error() {
     // Port 1 is not listening, which is the closest thing to "the network is
     // down" a test can arrange without a network.
-    let mailtea = Client::new(API_KEY, Some("http://127.0.0.1:1".to_string()));
+    let mailtea = Mailtea::builder()
+        .api_key(API_KEY)
+        .base_url("http://127.0.0.1:1")
+        .build()
+        .expect("build failed");
 
     let error = mailtea
-        .send(&hello())
+        .emails
+        .send(&hello_email(FROM, TO, "Hello from Rust"))
         .await
         .expect_err("a send to a closed port should fail");
 
-    assert!(matches!(error, MailteaError::Transport(_)));
-    assert_eq!(error.status(), None);
+    // Status 0 means the request never reached the API, so nothing was sent.
+    assert!(error.is_client_error());
+    assert_eq!(error.status(), 0);
+}
+
+#[tokio::test]
+async fn a_missing_api_key_fails_loudly_rather_than_silently() {
+    let error = Mailtea::builder()
+        .api_key("")
+        .build()
+        .expect_err("an empty key should not build");
+
+    assert_eq!(error.code(), Some("missing_api_key"));
+    assert!(error.message().contains("MAILTEA_API_KEY"));
 }

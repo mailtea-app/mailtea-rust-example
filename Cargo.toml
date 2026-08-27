@@ -1,22 +1,16 @@
 [package]
 name = "mailtea-rust-example"
 version = "0.1.0"
-edition = "2024"
-# reqwest 0.13 sets the floor here; nothing in the example needs newer.
-rust-version = "1.85"
+edition = "2021"
+# The SDK's floor, and therefore this example's.
+rust-version = "1.75"
 license = "MIT"
 publish = false
 
 [dependencies]
-# TLS is pinned to rustls rather than left to reqwest's default, so a fresh
-# Linux box needs no system OpenSSL and the backend cannot change under you.
-reqwest = { version = "0.13", default-features = false, features = [
-    "json",
-    "rustls",
-    "http2",
-] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# The official Mailtea Rust SDK. Switch to the registry form —
+# `mailtea = "0.1"` — once the crate is published to crates.io.
+mailtea = { git = "https://github.com/mailtea-app/mailtea-rust", tag = "v0.1.0" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # Only used to stamp an RFC 3339 `scheduled_at`.
 chrono = { version = "0.4", default-features = false, features = ["now", "std"] }
@@ -27,3 +21,4 @@ dotenvy = "0.15"
 # The tests serve their own mock Mailtea over a tokio TcpListener, so they add
 # no HTTP framework and make no network calls.
 tokio = { version = "1", features = ["net", "io-util"] }
+serde_json = "1"

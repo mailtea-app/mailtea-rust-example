@@ -1,4 +1,9 @@
 /target
+# No lockfile until the SDK is on crates.io: the git dependency below pins a
+# commit in a repo that has to exist first. Restore the committed Cargo.lock
+# once `mailtea = "0.1"` resolves from the registry.
+Cargo.lock
+.cargo/
 .env
 .env.local
 .DS_Store
