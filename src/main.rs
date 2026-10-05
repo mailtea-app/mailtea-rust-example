@@ -27,9 +27,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let to = required("MAILTEA_TO")?;
     let subject = env::var("MAILTEA_SUBJECT").unwrap_or_else(|_| "Hello from Rust".to_string());
 
-    // Reads MAILTEA_API_KEY, and MAILTEA_API_BASE_URL when it is set —
-    // that one is only for local dev or a self-hosted Mailtea; unset, the
-    // client talks to https://api.mailtea.app.
+    // Reads MAILTEA_API_KEY, and the optional MAILTEA_API_BASE_URL override.
+    // Unset, the client talks to https://api.mailtea.app.
     let mailtea = Mailtea::from_env()?;
 
     // One key per logical send, so a retry replays the first answer instead of

@@ -46,8 +46,8 @@ Canceled txemail_d17754e1a0df4274bacc168424d8ff60
 
 ## Sending
 
-`Mailtea::from_env()` reads `MAILTEA_API_KEY`. `MAILTEA_API_BASE_URL` is only
-needed for local dev or a self-hosted Mailtea — unset, the client talks to
+`Mailtea::from_env()` reads `MAILTEA_API_KEY`, and the optional
+`MAILTEA_API_BASE_URL` override. Unset, the client talks to
 `https://api.mailtea.app`.
 
 ```rust
@@ -75,7 +75,7 @@ than sent as `null`.
 Add `scheduled_at` (RFC 3339, UTC) to schedule instead of sending now, and cancel
 with `mailtea.emails.cancel(&id)` while it is still `scheduled`. Only a scheduled
 send can be cancelled — an ordinary immediate one is `queued` and already on its
-way, so it answers 422. SES caps a single message at 50 recipients combined
+way, so it answers 422. A single message is capped at 50 recipients combined
 across `to`, `cc`, and `bcc`.
 
 ### Retrying safely
@@ -135,8 +135,6 @@ nothing logs it.
 - A typed error carrying the API's status, message, and the fields a 400 named,
   so a failed send is loud instead of silent
 - An `Idempotency-Key` so a retried send does not arrive twice
-- Resolving the key and base URL from the environment, so the same binary runs
-  against production, a self-hosted instance, or a local dev API
 - Keeping the API key in the environment — the client's `Debug` prints it
   redacted
 

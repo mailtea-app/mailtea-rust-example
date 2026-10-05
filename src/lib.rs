@@ -11,8 +11,8 @@ use mailtea::SendEmail;
 /// rather than sent as `null`: an empty `cc` or a null `scheduled_at` would
 /// turn an immediate send into a rejected one.
 ///
-/// SES caps a single message at 50 recipients combined across `to`, `cc` and
-/// `bcc`.
+/// A single message is capped at 50 recipients combined across `to`, `cc`
+/// and `bcc`.
 pub fn hello_email(from: &str, to: &str, subject: &str) -> SendEmail {
     SendEmail::new(from, [to], subject)
         // Send `html`, `text`, or both. Both is what inboxes prefer.
